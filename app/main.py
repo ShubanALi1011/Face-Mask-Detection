@@ -1,4 +1,5 @@
 import streamlit as st
+from pathlib import Path
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
 import av
 import cv2
@@ -14,10 +15,20 @@ st.set_page_config(
 st.title("😷 Face Mask Detection")
 st.markdown("Real-time face mask detection using YOLOv8 and TensorFlow")
 
+
 @st.cache_resource
 def load_models():
-    mask_model = load_model("../models/mask_detector.keras")
-    face_detector = YOLO("../models/yolov8n-face-lindevs.pt")
+    base_dir = Path(__file__).resolve().parent.parent
+
+    mask_path = base_dir / "models" / "mask_detector.keras"
+    yolo_path = base_dir / "models" / "yolov8n-face-lindevs.pt"
+
+    st.write("Mask path:", mask_path)
+    st.write("Mask exists:", mask_path.exists())
+
+    mask_model = load_model(str(mask_path), compile=False)
+    face_detector = YOLO(str(yolo_path))
+
     return mask_model, face_detector
 
 
