@@ -1,121 +1,96 @@
-import streamlit as st
-from pathlib import Path
-from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
-import av
 import cv2
 import numpy as np
 from ultralytics import YOLO
 from tensorflow.keras.models import load_model
 
-st.set_page_config(
-    page_title="Face Mask Detection",
-    layout="wide"
-)
+model = load_model("../models/face_mask_vgg16.keras")
+face_detector = YOLO("../models/yolov8n-face-lindevs.pt")
 
-st.title("😷 Face Mask Detection")
-st.markdown("Real-time face mask detection using YOLOv8 and TensorFlow")
+cap = cv2.VideoCapture(0)
 
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+    results = face_detector(frame, verbose=False)
 
-@st.cache_resource
-def load_models():
-    base_dir = Path(__file__).resolve().parent.parent
+    for result in results:
+        boxes = result.boxes
+        for box in boxes:
+            x1, y1, x2, y2 = map(
+                int,
+                box.xyxy[0]
+            )
 
-    mask_path = base_dir / "models" / "mask_detector.keras"
-    yolo_path = base_dir / "models" / "yolov8n-face-lindevs.pt"
+            x1 = max(0, x1)
+            y1 = max(0, y1)
 
-    st.write("Mask path:", mask_path)
-    st.write("Mask exists:", mask_path.exists())
+            x2 = min(frame.shape[1], x2)
+            y2 = min(frame.shape[0], y2)
 
-    mask_model = load_model(str(mask_path), compile=False)
-    face_detector = YOLO(str(yolo_path))
+            face = frame[y1:y2, x1:x2]
 
-    return mask_model, face_detector
+            if face.size == 0:
+                continue
+            
+            img = cv2.cvtColor(
+                face,
+                cv2.COLOR_BGR2RGB
+            )
 
+            img = cv2.resize(
+                img,
+                (224, 224)
+            )
 
-mask_model, face_detector = load_models()
+            img = img.astype(
+                np.float32
+            )
 
+            img = np.expand_dims(
+                img,
+                axis=0
+            )
+            
+            pred = model.predict(
+                img,
+                verbose=0
+            )[0][0]
 
-class VideoProcessor(VideoProcessorBase):
-    def recv(self, frame):
-        img = frame.to_ndarray(format="bgr24")
+            print("Prediction:", pred)
 
-        results = face_detector(img, verbose=False)
+            if pred > 0.5:
+                label = "No Mask"
+                color = (0, 0, 255)
+            else:
+                label = "Mask"
+                color = (0, 255, 0)
+                
+            cv2.rectangle(
+                frame,
+                (x1, y1),
+                (x2, y2),
+                color,
+                3
+            )
 
-        for result in results:
-            for box in result.boxes:
-                x1, y1, x2, y2 = map(int, box.xyxy[0])
+            cv2.putText(
+                frame,
+                f"{label} {pred:.3f}",
+                (x1, y1 - 10),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                color,
+                2
+            )
 
-                x1 = max(0, x1)
-                y1 = max(0, y1)
-                x2 = min(img.shape[1], x2)
-                y2 = min(img.shape[0], y2)
+    cv2.imshow(
+        "Face Mask Detection",
+        frame
+    )
 
-                face = img[y1:y2, x1:x2]
+    if cv2.waitKey(1) & 0xFF == ord("q"):
+        break
 
-                if face.size == 0:
-                    continue
-
-                face_rgb = cv2.cvtColor(
-                    face,
-                    cv2.COLOR_BGR2RGB
-                )
-
-                face_rgb = cv2.resize(
-                    face_rgb,
-                    (224, 224)
-                )
-
-                face_rgb = face_rgb.astype(np.float32)
-
-                face_rgb = np.expand_dims(
-                    face_rgb,
-                    axis=0
-                )
-
-                pred = mask_model.predict(
-                    face_rgb,
-                    verbose=0
-                )[0][0]
-
-                if pred > 0.5:
-                    label = "Mask"
-                    color = (0, 255, 0)
-                else:
-                    label = "No Mask"
-                    color = (0, 0, 255)
-
-                cv2.rectangle(
-                    img,
-                    (x1, y1),
-                    (x2, y2),
-                    color,
-                    2
-                )
-
-                cv2.putText(
-                    img,
-                    f"{label} {pred:.2f}",
-                    (x1, y1 - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    color,
-                    2
-                )
-
-        return av.VideoFrame.from_ndarray(
-            img,
-            format="bgr24"
-        )
-
-
-st.set_page_config(layout="wide")
-
-webrtc_streamer(
-    key="mask-detection",
-    video_processor_factory=VideoProcessor,
-    media_stream_constraints={
-        "video": True,
-        "audio": False
-    },
-    async_processing=True
-)
+cap.release()
+cv2.destroyAllWindows()
